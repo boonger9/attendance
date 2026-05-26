@@ -244,6 +244,9 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 .mcard-name{font-size:15px;font-weight:600;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .mcard-detail{font-size:12px;color:var(--txt3);margin-top:2px}
 .mcard-actions{display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.show-inactive-btn{margin:8px 14px;padding:9px 14px;background:var(--card);border:1.5px solid var(--border);border-radius:var(--rpill);font-family:var(--font);font-size:12px;font-weight:500;color:var(--txt2);cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .13s}
+.show-inactive-btn.on{background:var(--yellow-bg);border-color:var(--yellow);color:var(--yellow)}
+.inactive-badge{background:#F5F5F5;color:#999;font-size:10px;font-weight:700;padding:3px 7px;border-radius:var(--rpill)}
 .fab{position:fixed;bottom:calc(76px + env(safe-area-inset-bottom));right:18px;width:56px;height:56px;border-radius:50%;background:var(--teal);color:#fff;border:none;font-size:30px;cursor:pointer;box-shadow:0 4px 20px rgba(59,169,144,.4);display:flex;align-items:center;justify-content:center;z-index:40}
 .fab:active{transform:scale(.9)}
 
@@ -473,6 +476,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     <div id="t-mem" class="hidden">
       <div class="mem-search-wrap"><input type="search" class="mem-search" id="mem-search" placeholder="이름으로 검색..." oninput="onMemSearch(this.value)"></div>
       <div class="filter-row" id="mem-dept"></div>
+      <button class="show-inactive-btn" id="inactive-toggle-btn" onclick="toggleShowInactive()">👤 비활성 교인 보기 <span id="inactive-count-badge"></span></button>
       <div id="mem-list"></div>
       <button class="fab" onclick="openMemberModal(null)">＋</button>
     </div>
@@ -499,6 +503,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
         </div>
         <div style="height:8px"></div>
         <div id="sp-att-list"></div>
+        <div class="complete-wrap" id="sp-complete-wrap"></div>
         <div style="height:14px"></div>
       </div>
     </div>
@@ -506,7 +511,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     <!-- 통계 탭 -->
     <div id="t-stats" class="hidden">
       <div class="stats-ctrl">
-        <select class="sel" id="st-year" onchange="renderStats()"><option value="2026">2026년</option></select>
+        <select class="sel" id="st-year" onchange="renderStats()" id="st-year"></select>
         <select class="sel" id="st-month" onchange="renderStats()">
           <option value="all">연간</option><option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
           <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option><option value="7">7월</option>
@@ -615,7 +620,7 @@ const MNAMES=['1월','2월','3월','4월','5월','6월','7월','8월','9월','10
 
 let db=null,role=null;
 let members={},attendance={},visitors={},config={},attStatus={};
-let specialMeetings={},specialAttendance={};
+let specialMeetings={},specialAttendance={},specialStatus={};
 let SUNDAYS=[];
 let pinTarget=null,pinBuf='';
 let editId=null,reasonId=null,notesId=null,pinChangeTarget=null,selReason='',reasonDateCtx=null;
@@ -623,11 +628,16 @@ let currentMeetingId=null,convertingVisitorRef=null;
 let selectedDate=null,attDept='all',showAbsentOnly=false;
 let recDetailDate=null,recDetailDept='all';
 let calYear=2026,calMonth=4; // default May 2026
-let memDept='all',memSearch='';
+let memDept='all',memSearch='',showInactive=false;
 
 function localDateStr(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function genSundays(){SUNDAYS=[];for(let i=0;i<60;i++){const d=new Date(2026,0,4+i*7);if(d.getFullYear()>2026)break;SUNDAYS.push(localDateStr(d));}}
-function todayIdx(){const t=localDateStr(new Date());let idx=0;for(let i=0;i<SUNDAYS.length;i++){if(SUNDAYS[i]<=t)idx=i;}return idx;}
+function todayIdx(){
+  const t=localDateStr(new Date());
+  let idx=0;
+  for(let i=0;i<SUNDAYS.length;i++){if(SUNDAYS[i]<=t)idx=i;}
+  return idx;
+}
 function fmtDate(s){const p=s.split('-');return `${p[0]}년 ${MNAMES[parseInt(p[1])-1]} ${parseInt(p[2])}일`;}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2);}
 
@@ -642,6 +652,7 @@ function subscribe(){
   db.ref('visitors').on('value',s=>{visitors=s.val()||{};if(selectedDate)renderAttDetail(selectedDate);});
   db.ref('special_meetings').on('value',s=>{specialMeetings=s.val()||{};if(!document.getElementById('t-special').classList.contains('hidden')&&!currentMeetingId)renderSpecialList();});
   db.ref('special_attendance').on('value',s=>{specialAttendance=s.val()||{};if(currentMeetingId)renderSpecialAtt(currentMeetingId);});
+  db.ref('special_status').on('value',s=>{specialStatus=s.val()||{};if(currentMeetingId)renderSpecialAtt(currentMeetingId);});
 }
 function refreshViews(){
   if(!document.getElementById('t-att').classList.contains('hidden')){renderCalendar();if(selectedDate)renderAttDetail(selectedDate);}
@@ -828,7 +839,7 @@ function renderRecMain(){
   }).join('');}
   // 기록 목록
   const today2=localDateStr(new Date());
-  const pastSuns=SUNDAYS.filter(s=>s<=today2);
+  const pastSuns=SUNDAYS.filter(s=>s<=today2 && parseInt(s.split('-')[0])>=2026);
   if(!pastSuns.length){document.getElementById('rec-list').innerHTML='<div class="empty-state">아직 기록이 없습니다</div>';return;}
   const byMonth={};pastSuns.forEach(s=>{const mo=s.substring(0,7);if(!byMonth[mo])byMonth[mo]=[];byMonth[mo].push(s);});
   let html='';
@@ -879,28 +890,83 @@ function renderRecDetail(date){
 
 // ── 교인 탭 ──────────────────────────────────────
 function setMemDept(d){memDept=d;renderDeptChips('mem-dept',d,'setMemDept');renderMem();}
+function toggleShowInactive(){
+  showInactive=!showInactive;
+  const btn=document.getElementById('inactive-toggle-btn');
+  if(btn)btn.classList.toggle('on',showInactive);
+  renderMem();
+}
 function onMemSearch(v){memSearch=v.trim();renderMem();}
 function renderMem(){
   renderDeptChips('mem-dept',memDept,'setMemDept');
-  let list=Object.entries(members).filter(([,m])=>m.active!==false);
-  if(memDept!=='all')list=list.filter(([,m])=>m.department===memDept);
-  if(memSearch)list=list.filter(([,m])=>(m.name||'').includes(memSearch));
-  const dO=Object.keys(DEPTS);list.sort(([,a],[,b])=>{const da=dO.indexOf(a.department),db2=dO.indexOf(b.department);if(da!==db2)return da-db2;return(a.name||'').localeCompare(b.name||'','ko');});
-  let html='',lastDept=null;
-  list.forEach(([id,m])=>{
-    if(memDept==='all'&&!memSearch&&m.department!==lastDept){lastDept=m.department;const cnt=list.filter(([,mm])=>mm.department===m.department).length;html+=`<div class="sec-hd">${DEPTS[m.department]||m.department} · ${cnt}명</div>`;}
-    const ca=consAbsences(id,SUNDAYS[todayIdx()]);const col=DEPT_COLORS[m.department]||'#888';
-    html+=`<div class="mcard"><div class="avatar" style="background:${col}">${(m.name||'?')[0]}</div>
-      <div class="mcard-info"><div class="mcard-name">${m.name}${statusBadge(m.memberStatus)}${m.isNewcomer?'<span class="badge badge-new">새가족</span>':''}${ca>=2?`<span class="badge badge-abs">${ca}주연속</span>`:''}</div>
-      <div class="mcard-detail">${DEPTS[m.department]||''}${m.phone?' · '+m.phone:''}</div></div>
-      <div class="mcard-actions"><button class="btn-sm primary" onclick="openNotes('${id}')">📝</button><button class="btn-sm" onclick="openMemberModal('${id}')">수정</button><button class="btn-sm danger" onclick="doDelMember('${id}')">삭제</button></div>
-    </div>`;
-  });
-  document.getElementById('mem-list').innerHTML=html||`<div class="empty-state">${memSearch?`"${memSearch}" 검색 결과 없음`:'등록된 교인이 없습니다'}</div>`;
+  const allActive=Object.entries(members).filter(([,m])=>m.active!==false);
+  const allInactive=Object.entries(members).filter(([,m])=>m.active===false);
+  // 비활성 카운트 배지
+  const badge=document.getElementById('inactive-count-badge');
+  if(badge)badge.innerHTML=allInactive.length>0?`<span class="inactive-badge">${allInactive.length}명</span>`:'';
+  const dO=Object.keys(DEPTS);
+  const sortFn=([,a],[,b])=>{const da=dO.indexOf(a.department),db2=dO.indexOf(b.department);if(da!==db2)return da-db2;return(a.name||'').localeCompare(b.name||'','ko');};
+  let html='';
+  if(!showInactive){
+    // 활성 교인
+    let list=allActive.slice();
+    if(memDept!=='all')list=list.filter(([,m])=>m.department===memDept);
+    if(memSearch)list=list.filter(([,m])=>(m.name||'').includes(memSearch));
+    list.sort(sortFn);
+    let lastDept=null;
+    list.forEach(([id,m])=>{
+      if(memDept==='all'&&!memSearch&&m.department!==lastDept){lastDept=m.department;const cnt=list.filter(([,mm])=>mm.department===m.department).length;html+=`<div class="sec-hd">${DEPTS[m.department]||m.department} · ${cnt}명</div>`;}
+      const ca=consAbsences(id,SUNDAYS[todayIdx()]);const col=DEPT_COLORS[m.department]||'#888';
+      html+=`<div class="mcard"><div class="avatar" style="background:${col}">${(m.name||'?')[0]}</div>
+        <div class="mcard-info"><div class="mcard-name">${m.name}${statusBadge(m.memberStatus)}${m.isNewcomer?'<span class="badge badge-new">새가족</span>':''}${ca>=2?`<span class="badge badge-abs">${ca}주연속</span>`:''}</div>
+        <div class="mcard-detail">${DEPTS[m.department]||''}${m.phone?' · '+m.phone:''}</div></div>
+        <div class="mcard-actions"><button class="btn-sm primary" onclick="openNotes('${id}')">📝</button><button class="btn-sm" onclick="openMemberModal('${id}')">수정</button><button class="btn-sm" style="color:var(--yellow);border-color:rgba(230,126,34,.3);background:var(--yellow-bg)" onclick="doDeactivate('${id}')">비활성화</button></div>
+      </div>`;
+    });
+    html=html||`<div class="empty-state">${memSearch?`"${memSearch}" 검색 결과 없음`:'등록된 교인이 없습니다'}</div>`;
+  } else {
+    // 비활성 교인
+    let list=allInactive.slice();
+    if(memSearch)list=list.filter(([,m])=>(m.name||'').includes(memSearch));
+    list.sort(sortFn);
+    if(!list.length){html='<div class="empty-state">비활성 교인이 없습니다</div>';}
+    else{
+      html+=`<div class="sec-hd" style="background:var(--yellow-bg);color:var(--yellow)">비활성 교인 · ${list.length}명 (과거 기록 보존)</div>`;
+      list.forEach(([id,m])=>{
+        const col=DEPT_COLORS[m.department]||'#888';
+        html+=`<div class="mcard" style="opacity:.7"><div class="avatar" style="background:${col};filter:grayscale(60%)">${(m.name||'?')[0]}</div>
+          <div class="mcard-info"><div class="mcard-name">${m.name}<span class="inactive-badge">비활성</span>${statusBadge(m.memberStatus)}</div>
+          <div class="mcard-detail">${DEPTS[m.department]||''}${m.phone?' · '+m.phone:''}</div></div>
+          <div class="mcard-actions"><button class="btn-sm green" onclick="doReactivate('${id}')">복귀</button><button class="btn-sm danger" onclick="doDelMember('${id}')">완전삭제</button></div>
+        </div>`;
+      });
+    }
+  }
+  document.getElementById('mem-list').innerHTML=html;
 }
 function openMemberModal(id){editId=id;convertingVisitorRef=null;document.getElementById('mem-modal-title').textContent=id?'교인 수정':'교인 추가';const dSel=document.getElementById('m-dept');dSel.innerHTML=Object.entries(DEPTS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');if(id&&members[id]){const m=members[id];document.getElementById('m-name').value=m.name||'';dSel.value=m.department||'adult_m';document.getElementById('m-status').value=m.memberStatus||'';document.getElementById('m-phone').value=m.phone||'';document.getElementById('m-new').value=m.isNewcomer?'true':'false';document.getElementById('m-notes').value=m.notes||'';}else{document.getElementById('m-name').value='';dSel.value='adult_m';document.getElementById('m-status').value='';document.getElementById('m-phone').value='';document.getElementById('m-new').value='false';document.getElementById('m-notes').value='';}openModal('modal-member');}
 async function saveMember(){const name=document.getElementById('m-name').value.trim();if(!name){toast('이름을 입력해주세요');return;}const id=editId||uid();await putMember(id,{name,department:document.getElementById('m-dept').value,memberStatus:document.getElementById('m-status').value,phone:document.getElementById('m-phone').value.trim(),isNewcomer:document.getElementById('m-new').value==='true',notes:document.getElementById('m-notes').value.trim(),active:true,registeredDate:(editId&&members[editId]?.registeredDate)||localDateStr(new Date())});if(convertingVisitorRef){await delVisitor(convertingVisitorRef.date,convertingVisitorRef.vid);convertingVisitorRef=null;}closeModal('modal-member');toast(editId?'수정되었습니다':'추가되었습니다');}
-async function doDelMember(id){if(confirm(`${members[id]?.name||''}님을 삭제하시겠습니까?`)){await delMember(id);toast('삭제되었습니다');}}
+async function doDeactivate(id){
+  const m=members[id];
+  if(confirm(`${m?.name||''}님을 비활성화하시겠습니까?\n\n출석부에서 숨겨지지만 과거 출석 기록은 보존됩니다.\n(교인 탭 → 비활성 교인 보기에서 복귀 가능)`)){
+    await db.ref(`members/${id}/active`).set(false);
+    toast(`${m?.name||''}님이 비활성화되었습니다`);
+  }
+}
+async function doReactivate(id){
+  const m=members[id];
+  await db.ref(`members/${id}/active`).set(true);
+  showInactive=false;
+  const btn=document.getElementById('inactive-toggle-btn');
+  if(btn)btn.classList.remove('on');
+  toast(`${m?.name||''}님이 출석부에 복귀되었습니다`);
+}
+async function doDelMember(id){
+  const name=members[id]?.name||'';
+  if(confirm(`⚠️ ${name}님을 완전 삭제하시겠습니까?\n\n삭제하면 과거 출석 기록도 조회가 불가능해집니다.\n출석 중단 교인은 \'비활성화\'를 권장합니다.`)){
+    await delMember(id);toast('삭제되었습니다');
+  }
+}
 function openNotes(id){notesId=id;document.getElementById('notes-title').textContent=`${members[id]?.name||''} — 기도 메모`;document.getElementById('notes-inp').value=members[id]?.notes||'';openModal('modal-notes');}
 async function saveNotes(){await putNotes(notesId,document.getElementById('notes-inp').value.trim());closeModal('modal-notes');toast('저장되었습니다');}
 
@@ -929,6 +995,17 @@ async function saveSpecialMeeting(){const type=document.getElementById('sp-type'
 async function doDelMeeting(id){if(confirm(`"${specialMeetings[id]?.name||'이 모임'}"을 삭제하시겠습니까?`)){await delSpecialMeeting(id);toast('삭제되었습니다');}}
 function openSpecialAtt(id){currentMeetingId=id;document.getElementById('special-list-view').classList.add('hidden');document.getElementById('special-att-view').classList.remove('hidden');renderSpecialAtt(id);}
 function backToMeetingList(){currentMeetingId=null;document.getElementById('special-att-view').classList.add('hidden');document.getElementById('special-list-view').classList.remove('hidden');renderSpecialList();}
+async function markSpecialComplete(id){
+  const cur=specialStatus[id];
+  if(cur?.completed){
+    await db.ref(`special_status/${id}`).update({completed:false});
+    toast('수정 모드로 전환되었습니다');
+  } else {
+    const now=new Date();const t=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    await db.ref(`special_status/${id}`).update({completed:true,at:Date.now(),timeStr:t,by:role});
+    toast('출석 체크가 완료되었습니다 ✅');
+  }
+}
 function renderSpecialAtt(id){
   const m=specialMeetings[id];if(!m)return;
   document.getElementById('sp-att-title').textContent=m.name;document.getElementById('sp-att-sub').textContent=fmtDate(m.date);
@@ -947,13 +1024,42 @@ function renderSpecialAtt(id){
   });
   if(!mList.length)html='<div class="empty-state">세례교인·입교교인이 없습니다</div>';
   document.getElementById('sp-att-list').innerHTML=html;
+  // 완료 버튼
+  const st=specialStatus[id];const isDone=!!st?.completed;
+  const cw=document.getElementById('sp-complete-wrap');
+  if(cw)cw.innerHTML=isDone
+    ?`<button class="complete-btn edit" onclick="markSpecialComplete('${id}')">✏️ 수정하기</button>`
+    :`<button class="complete-btn todo" onclick="markSpecialComplete('${id}')">✅ 출석 완료</button>`;
+  // 완료 배지
+  const doneBar=document.createElement('div');
+  const statsCard=document.querySelector('#sp-att-view .att-stats-card');
+  if(statsCard){
+    let existingBar=document.getElementById('sp-done-bar');
+    if(!existingBar){existingBar=document.createElement('div');existingBar.id='sp-done-bar';existingBar.className='done-bar';statsCard.appendChild(existingBar);}
+    existingBar.style.display=isDone?'flex':'none';
+    existingBar.innerHTML=isDone?`<span class="done-txt">✅ 완료됨 ${st.timeStr||''}</span><button class="edit-btn" onclick="markSpecialComplete('${id}')">수정하기</button>`:'';
+  }
 }
 async function toggleSpAtt(mid,meetId){const cur=(specialAttendance[meetId]&&specialAttendance[meetId][mid])||{};await db.ref(`special_attendance/${meetId}/${mid}`).update({present:!cur.present,at:Date.now()});}
 
 // ── 통계 ─────────────────────────────────────────
-function initStatsControls(){const ds=document.getElementById('st-dept');if(ds&&ds.children.length<2)ds.innerHTML='<option value="all">전체부서</option>'+Object.entries(DEPTS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');const ms=document.getElementById('st-month');if(ms&&ms.value==='1')ms.value=(new Date().getMonth()+1).toString();const xb=document.getElementById('xlsx-btn');if(xb)xb.style.display=role==='admin'?'flex':'none';}
+function initStatsControls(){
+  const ds=document.getElementById('st-dept');
+  if(ds&&ds.children.length<2)ds.innerHTML='<option value="all">전체부서</option>'+Object.entries(DEPTS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  const ms=document.getElementById('st-month');
+  if(ms&&ms.value==='1')ms.value=(new Date().getMonth()+1).toString();
+  // 연도 드롭다운 동적 생성
+  const ys=document.getElementById('st-year');
+  if(ys&&ys.children.length<2){
+    const curY=new Date().getFullYear();
+    const years=[...new Set(SUNDAYS.map(s=>parseInt(s.split('-')[0])))].sort();
+    ys.innerHTML=years.map(y=>`<option value="${y}"${y===curY?'selected':''}>${y}년</option>`).join('');
+  }
+  const xb=document.getElementById('xlsx-btn');
+  if(xb)xb.style.display=role==='admin'?'flex':'none';
+}
 function renderStats(){
-  initStatsControls();const yr=parseInt(document.getElementById('st-year')?.value||'2026');const mo=document.getElementById('st-month')?.value||'all';const dept=document.getElementById('st-dept')?.value||'all';
+  initStatsControls();const yr=parseInt(document.getElementById('st-year')?.value||new Date().getFullYear());const mo=document.getElementById('st-month')?.value||'all';const dept=document.getElementById('st-dept')?.value||'all';
   let suns=SUNDAYS.filter(s=>parseInt(s.split('-')[0])===yr);if(mo!=='all')suns=suns.filter(s=>parseInt(s.split('-')[1])===parseInt(mo));
   let ml=Object.entries(members).filter(([,m])=>m.active!==false);if(dept!=='all')ml=ml.filter(([,m])=>m.department===dept);
   const dO=Object.keys(DEPTS);ml.sort(([,a],[,b])=>{const da=dO.indexOf(a.department),db2=dO.indexOf(b.department);if(da!==db2)return da-db2;return(a.name||'').localeCompare(b.name||'','ko');});
@@ -963,7 +1069,7 @@ function renderStats(){
   else{suns.forEach(s=>{const p=s.split('-');html+=`<th>${parseInt(p[1])}/${parseInt(p[2])}</th>`;});html+=`<th>합계</th><th>출석률</th></tr></thead><tbody>`;ml.forEach(([id,m])=>{html+=`<tr><td>${m.name}</td><td>${DEPTS[m.department]||''}</td>`;let tot=0;suns.forEach(s=>{const p=attendance[s]&&attendance[s][id]&&attendance[s][id].present;if(p)tot++;html+=`<td style="color:${p?'var(--green)':'var(--red)'}">${p?'O':'×'}</td>`;});const pct=suns.length?Math.round(tot/suns.length*100):0;html+=`<td><b>${tot}</b></td><td class="${pct>=80?'r-h':pct>=60?'r-m':'r-l'}">${pct}%</td></tr>`;});html+=`<tr class="sum"><td>합계</td><td></td>`;suns.forEach(s=>{const p=ml.filter(([id])=>attendance[s]&&attendance[s][id]&&attendance[s][id].present).length;html+=`<td class="gc">${p}</td>`;});const tall=ml.reduce((s,[id])=>s+suns.filter(d=>attendance[d]&&attendance[d][id]&&attendance[d][id].present).length,0);const tp2=suns.length*ml.length;html+=`<td></td><td class="gc">${tp2?Math.round(tall/tp2*100):0}%</td></tr>`;}
   document.getElementById('st-wrap').innerHTML=html+'</tbody></table>';
 }
-function exportExcel(){const yr=parseInt(document.getElementById('st-year')?.value||'2026');const mo=document.getElementById('st-month')?.value||'all';const dept=document.getElementById('st-dept')?.value||'all';let suns=SUNDAYS.filter(s=>parseInt(s.split('-')[0])===yr);if(mo!=='all')suns=suns.filter(s=>parseInt(s.split('-')[1])===parseInt(mo));let ml=Object.entries(members).filter(([,m])=>m.active!==false);if(dept!=='all')ml=ml.filter(([,m])=>m.department===dept);const dO=Object.keys(DEPTS);ml.sort(([,a],[,b])=>{const da=dO.indexOf(a.department),db2=dO.indexOf(b.department);if(da!==db2)return da-db2;return(a.name||'').localeCompare(b.name||'','ko');});const wb=XLSX.utils.book_new();const stL=m=>m.memberStatus?m.memberStatus+'교인':'';if(mo==='all'){const months=[1,2,3,4,5,6,7,8,9,10,11,12];const mMap={};months.forEach(m=>mMap[m]=suns.filter(s=>parseInt(s.split('-')[1])===m));const hdr=['이름','부서','신급',...months.map(m=>`${m}월`),'합계','출석률'];const rows=[hdr];ml.forEach(([id,m])=>{let tot=0;const cols=months.map(mn=>{const p=mMap[mn].filter(s=>attendance[s]&&attendance[s][id]&&attendance[s][id].present).length;tot+=p;return `${p}/${mMap[mn].length}`;});rows.push([m.name,DEPTS[m.department]||'',stL(m),...cols,tot,`${suns.length?Math.round(tot/suns.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'연간요약');months.forEach(mn=>{const ms2=mMap[mn];if(!ms2.length)return;const h2=['이름','부서','신급',...ms2.map(s=>{const p=s.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}), '합계','출석률'];const r2=[h2];ml.forEach(([id,m])=>{let tot=0;const days=ms2.map(s=>{const p=attendance[s]&&attendance[s][id]&&attendance[s][id].present;if(p)tot++;return p?'O':'×';});r2.push([m.name,DEPTS[m.department]||'',stL(m),...days,tot,`${ms2.length?Math.round(tot/ms2.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(r2),`${mn}월`);});}else{const h=['이름','부서','신급',...suns.map(s=>{const p=s.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}), '합계','출석률'];const rows=[h];ml.forEach(([id,m])=>{let tot=0;const days=suns.map(s=>{const p=attendance[s]&&attendance[s][id]&&attendance[s][id].present;if(p)tot++;return p?'O':'×';});rows.push([m.name,DEPTS[m.department]||'',stL(m),...days,tot,`${suns.length?Math.round(tot/suns.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),`${mo}월`);}XLSX.writeFile(wb,`출석부_${yr}년${mo==='all'?'_연간':'_'+mo+'월'}.xlsx`);toast('엑셀 다운로드 시작됩니다');}
+function exportExcel(){const yr=parseInt(document.getElementById('st-year')?.value||new Date().getFullYear());const mo=document.getElementById('st-month')?.value||'all';const dept=document.getElementById('st-dept')?.value||'all';let suns=SUNDAYS.filter(s=>parseInt(s.split('-')[0])===yr);if(mo!=='all')suns=suns.filter(s=>parseInt(s.split('-')[1])===parseInt(mo));let ml=Object.entries(members).filter(([,m])=>m.active!==false);if(dept!=='all')ml=ml.filter(([,m])=>m.department===dept);const dO=Object.keys(DEPTS);ml.sort(([,a],[,b])=>{const da=dO.indexOf(a.department),db2=dO.indexOf(b.department);if(da!==db2)return da-db2;return(a.name||'').localeCompare(b.name||'','ko');});const wb=XLSX.utils.book_new();const stL=m=>m.memberStatus?m.memberStatus+'교인':'';if(mo==='all'){const months=[1,2,3,4,5,6,7,8,9,10,11,12];const mMap={};months.forEach(m=>mMap[m]=suns.filter(s=>parseInt(s.split('-')[1])===m));const hdr=['이름','부서','신급',...months.map(m=>`${m}월`),'합계','출석률'];const rows=[hdr];ml.forEach(([id,m])=>{let tot=0;const cols=months.map(mn=>{const p=mMap[mn].filter(s=>attendance[s]&&attendance[s][id]&&attendance[s][id].present).length;tot+=p;return `${p}/${mMap[mn].length}`;});rows.push([m.name,DEPTS[m.department]||'',stL(m),...cols,tot,`${suns.length?Math.round(tot/suns.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'연간요약');months.forEach(mn=>{const ms2=mMap[mn];if(!ms2.length)return;const h2=['이름','부서','신급',...ms2.map(s=>{const p=s.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}), '합계','출석률'];const r2=[h2];ml.forEach(([id,m])=>{let tot=0;const days=ms2.map(s=>{const p=attendance[s]&&attendance[s][id]&&attendance[s][id].present;if(p)tot++;return p?'O':'×';});r2.push([m.name,DEPTS[m.department]||'',stL(m),...days,tot,`${ms2.length?Math.round(tot/ms2.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(r2),`${mn}월`);});}else{const h=['이름','부서','신급',...suns.map(s=>{const p=s.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}), '합계','출석률'];const rows=[h];ml.forEach(([id,m])=>{let tot=0;const days=suns.map(s=>{const p=attendance[s]&&attendance[s][id]&&attendance[s][id].present;if(p)tot++;return p?'O':'×';});rows.push([m.name,DEPTS[m.department]||'',stL(m),...days,tot,`${suns.length?Math.round(tot/suns.length*100):0}%`]);});XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),`${mo}월`);}XLSX.writeFile(wb,`출석부_${yr}년${mo==='all'?'_연간':'_'+mo+'월'}.xlsx`);toast('엑셀 다운로드 시작됩니다');}
 
 // ── 설정 ─────────────────────────────────────────
 function renderSettings(){
@@ -1022,7 +1128,7 @@ function switchTab(id){
   if(id==='stats'){initStatsControls();renderStats();}
   if(id==='set')renderSettings();
 }
-function logout(){role=null;try{['config','members','attendance','att_status','visitors','special_meetings','special_attendance'].forEach(p=>db?.ref(p).off());}catch{}members={};attendance={};attStatus={};visitors={};specialMeetings={};specialAttendance={};showScreen('login');}
+function logout(){role=null;try{['config','members','attendance','att_status','visitors','special_meetings','special_attendance','special_status'].forEach(p=>db?.ref(p).off());}catch{}members={};attendance={};attStatus={};visitors={};specialMeetings={};specialAttendance={};showScreen('login');}
 
 // ── 화면/모달 ─────────────────────────────────────
 function showScreen(n){['login','setup','app'].forEach(s=>document.getElementById('s-'+s).classList.add('hidden'));document.getElementById('s-'+n).classList.remove('hidden');if(n==='setup')buildSetup();}
