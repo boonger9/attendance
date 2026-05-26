@@ -131,6 +131,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 .badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px}
 .badge-new{background:#E3F0FF;color:#1565C0}
 .badge-abs{background:var(--red-bg);color:var(--red)}
+.badge-유아세례{background:#FFF3E0;color:#E65100}
 .badge-세례{background:#E3F0FF;color:#1565C0}
 .badge-입교{background:#EEF2FF;color:#3730A3}
 .badge-학습{background:#E8F5EE;color:#2E7D4F}
@@ -359,7 +360,8 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
         <div class="fg"><label class="fl">이름 *</label><input type="text" id="m-name" class="finp" placeholder="성함"></div>
         <div class="fg"><label class="fl">부서 *</label><select id="m-dept" class="finp fsel"></select></div>
         <div class="fg"><label class="fl">신급</label><select id="m-status" class="finp fsel">
-          <option value="">없음</option><option value="학습">학습교인</option>
+          <option value="">없음</option><option value="유아세례">유아세례</option>
+          <option value="학습">학습교인</option>
           <option value="세례">세례교인</option><option value="입교">입교교인</option>
         </select></div>
         <div class="fg"><label class="fl">연락처</label><input type="tel" id="m-phone" class="finp" placeholder="010-0000-0000"></div>
@@ -576,7 +578,8 @@ function consAbsences(mid){
 // ── 신급 뱃지 ──────────────────────────────────
 function statusBadge(st){
   if(!st)return '';
-  return `<span class="badge badge-${st}">${st}교인</span>`;
+  const label=st==='유아세례'?'유아세례':`${st}교인`;
+  return `<span class="badge badge-${st}">${label}</span>`;
 }
 function getSpecialMembers(){
   return Object.entries(members).filter(([,m])=>m.active!==false&&(m.memberStatus==='세례'||m.memberStatus==='입교'));
